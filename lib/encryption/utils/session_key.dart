@@ -130,17 +130,34 @@ class SessionKey {
     try {
       return session.decrypt(ciphertext);
     } catch (e) {
-      if (_triedMegolmV2) rethrow;
+      // Only the v1-reading-v2 MAC-length mismatch is recoverable by switching
+      // config. Other failures (missing key, unknown message index) must keep
+      // their original error and must not consume the one-shot upgrade attempt.
+      if (_triedMegolmV2 || !_isMegolmMacMismatch(e)) rethrow;
       _triedMegolmV2 = true;
       final upgraded = _rebuildAsMegolmV2(session);
       if (upgraded == null) rethrow;
-      final result = upgraded.decrypt(ciphertext);
+      final ({String plaintext, int messageIndex}) result;
+      try {
+        result = upgraded.decrypt(ciphertext);
+      } catch (_) {
+        // The v2 retry failed for an unrelated reason; surface the original
+        // error rather than a confusing "expected 32, got 8".
+        throw e;
+      }
       inboundGroupSession = upgraded;
       needsPersist = true;
       Logs().i('[Vodozemac] Upgraded session $sessionId to Megolm v2');
       return result;
     }
   }
+
+  // vodozemac reports the v1-session-reads-v2-message mismatch as
+  // "invalid MAC length: expected 8, got 32". "expected 8" only occurs when a
+  // version 1 session parses a longer (version 2) MAC, so it uniquely
+  // identifies the recoverable case. The wording is stable for the pinned
+  // vodozemac; revisit this string if that dependency is bumped.
+  bool _isMegolmMacMismatch(Object e) => e.toString().contains('expected 8');
 
   vod.InboundGroupSession? _rebuildAsMegolmV2(vod.InboundGroupSession session) {
     try {

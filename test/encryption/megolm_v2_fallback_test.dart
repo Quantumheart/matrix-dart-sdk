@@ -60,5 +60,32 @@ void main() {
       expect(result.plaintext, 'hello v1');
       expect(session.needsPersist, isFalse);
     });
+
+    test('a non-MAC failure does not consume the one-shot v2 upgrade', () {
+      final outbound = vod.GroupSession(useMegolmV2: true);
+      final key0 = outbound.sessionKey;
+      final msg0 = outbound.encrypt('m0'); // index 0
+      final msg1 = outbound.encrypt('m1'); // index 1
+
+      // Build a v1 inbound that only knows the session from index 1, so a
+      // decrypt of the index-0 message fails with "unknown message index"
+      // (a non-MAC error) rather than the recoverable MAC mismatch.
+      final exportAt1 =
+          vod.InboundGroupSession(key0, useMegolmV2: true).exportAt(1)!;
+      final session = buildSession(
+        vod.InboundGroupSession.import(exportAt1),
+        outbound.sessionId,
+      );
+
+      // Non-MAC failure: must throw and must NOT flip needsPersist or burn the
+      // upgrade attempt.
+      expect(() => session.decrypt(msg0), throwsA(anything));
+      expect(session.needsPersist, isFalse);
+
+      // A subsequent valid v2 message must still trigger the upgrade.
+      final result = session.decrypt(msg1);
+      expect(result.plaintext, 'm1');
+      expect(session.needsPersist, isTrue);
+    });
   });
 }
