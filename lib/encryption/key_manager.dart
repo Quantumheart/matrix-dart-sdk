@@ -208,6 +208,32 @@ class KeyManager {
     return storeFuture;
   }
 
+  /// Re-store an already cached inbound group session. Used after a session is
+  /// rebuilt with the Megolm v2 config during decryption so the upgraded pickle
+  /// survives a restart and the fallback only runs once.
+  Future<void> persistInboundGroupSession(
+    String roomId,
+    String sessionId,
+  ) async {
+    final userId = client.userID;
+    if (userId == null || !client.isLogged() || client.encryption == null) {
+      return;
+    }
+    final session = _inboundGroupSessions[roomId]?[sessionId];
+    final inbound = session?.inboundGroupSession;
+    if (session == null || inbound == null) return;
+    await client.database.storeInboundGroupSession(
+      roomId,
+      sessionId,
+      inbound.toPickleEncrypted(userId.toPickleKey()),
+      json.encode(session.content),
+      json.encode(session.indexes),
+      json.encode(session.allowedAtIndex),
+      session.senderKey,
+      json.encode(session.senderClaimedKeys),
+    );
+  }
+
   SessionKey? getInboundGroupSession(String roomId, String sessionId) {
     final sess = _inboundGroupSessions[roomId]?[sessionId];
     if (sess != null) {

@@ -190,10 +190,20 @@ class Encryption {
       // decrypt errors here may mean we have a bad session key - others might have a better one
       canRequestSession = true;
 
-      final decryptResult = inboundGroupSession!.inboundGroupSession!.decrypt(
+      final decryptResult = inboundGroupSession!.decrypt(
         content.ciphertextMegolm!,
       );
       canRequestSession = false;
+
+      if (inboundGroupSession.needsPersist) {
+        inboundGroupSession.needsPersist = false;
+        runInRoot(
+          () async => keyManager.persistInboundGroupSession(
+            event.room.id,
+            sessionId,
+          ),
+        );
+      }
 
       // we can't have the key be an int, else json-serializing will fail, thus we need it to be a string
       final messageIndexKey = 'key-${decryptResult.messageIndex}';

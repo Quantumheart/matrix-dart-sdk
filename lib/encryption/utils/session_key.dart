@@ -43,6 +43,12 @@ class SessionKey {
   /// Is this session valid?
   bool get isValid => inboundGroupSession != null;
 
+  /// Whether the underlying session was rebuilt with the Megolm v2 config
+  /// during decryption and its upgraded pickle has not yet been persisted.
+  bool needsPersist = false;
+
+  bool _triedMegolmV2 = false;
+
   /// roomId for this session
   String roomId;
 
@@ -104,6 +110,45 @@ class SessionKey {
         Logs().e('[Vodozemac] Unable to unpickle inboundGroupSession', e, s);
         rethrow;
       }
+    }
+  }
+
+  /// Decrypt a Megolm [ciphertext] with this session.
+  ///
+  /// vodozemac 0.10 made the version 1 Megolm config (8-byte truncated MAC)
+  /// the default. Messages authored by peers or older builds that ran the
+  /// pre-0.10 default carry a version 2 full MAC and fail here with
+  /// "invalid MAC length: expected 8, got 32". On such a failure the session
+  /// is rebuilt once with the version 2 config and the decryption retried; on
+  /// success the upgraded session is kept and [needsPersist] is set so the
+  /// caller can re-store its pickle.
+  ({String plaintext, int messageIndex}) decrypt(String ciphertext) {
+    final session = inboundGroupSession;
+    if (session == null) {
+      throw StateError('Cannot decrypt with an invalid session');
+    }
+    try {
+      return session.decrypt(ciphertext);
+    } catch (e) {
+      if (_triedMegolmV2) rethrow;
+      _triedMegolmV2 = true;
+      final upgraded = _rebuildAsMegolmV2(session);
+      if (upgraded == null) rethrow;
+      final result = upgraded.decrypt(ciphertext);
+      inboundGroupSession = upgraded;
+      needsPersist = true;
+      Logs().i('[Vodozemac] Upgraded session $sessionId to Megolm v2');
+      return result;
+    }
+  }
+
+  vod.InboundGroupSession? _rebuildAsMegolmV2(vod.InboundGroupSession session) {
+    try {
+      final exported = session.exportAtFirstKnownIndex();
+      return vod.InboundGroupSession.import(exported, useMegolmV2: true);
+    } catch (e, s) {
+      Logs().w('[Vodozemac] Could not rebuild session as Megolm v2', e, s);
+      return null;
     }
   }
 }
