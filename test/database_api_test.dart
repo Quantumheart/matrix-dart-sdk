@@ -591,6 +591,45 @@ void main() {
           Client('testclient', database: await getMatrixSdkDatabase()),
         );
       });
+      test('getUserDeviceKeys groups rows by user', () async {
+        String crossSigningContent(String userId, String publicKey) =>
+            jsonEncode({
+              'user_id': userId,
+              'usage': ['master'],
+              'keys': {'ed25519:$publicKey': publicKey},
+              'signatures': <String, dynamic>{},
+            });
+
+        // Unique ids so the assertions are isolated from other tests sharing
+        // this database.
+        const alice = '@group_test_alice:example.com';
+        const bob = '@group_test_bob:example.com';
+        await database.storeUserCrossSigningKey(
+          alice,
+          'ALICEKEY',
+          crossSigningContent(alice, 'ALICEKEY'),
+          false,
+          false,
+        );
+        await database.storeUserCrossSigningKey(
+          bob,
+          'BOBKEY',
+          crossSigningContent(bob, 'BOBKEY'),
+          false,
+          false,
+        );
+        await database.storeUserDeviceKeysInfo(alice, false);
+        await database.storeUserDeviceKeysInfo(bob, false);
+
+        final result = await database.getUserDeviceKeys(
+          Client('testclient', database: await getMatrixSdkDatabase()),
+        );
+
+        // Each user's cross-signing key is bucketed under that user only,
+        // with no cross-contamination between users.
+        expect(result[alice]!.crossSigningKeys.keys, ['ALICEKEY']);
+        expect(result[bob]!.crossSigningKeys.keys, ['BOBKEY']);
+      });
       test('storeUserCrossSigningKey', () async {
         await database.storeUserCrossSigningKey(
           '@alice:example.com',

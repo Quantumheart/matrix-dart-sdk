@@ -743,41 +743,29 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
           final userDeviceKeys = await _userDeviceKeysBox.getAllValues();
           final userCrossSigningKeys = await _userCrossSigningKeysBox
               .getAllValues();
+          // Group rows by userId once instead of re-scanning all rows per user.
+          Map<String, List<Map<String, dynamic>>> groupByUser(
+            Map<String, Map> rows,
+          ) {
+            final grouped = <String, List<Map<String, dynamic>>>{};
+            for (final entry in rows.entries) {
+              final userId = TupleKey.fromString(entry.key).parts.first;
+              (grouped[userId] ??= []).add(copyMap(entry.value));
+            }
+            return grouped;
+          }
+
+          final deviceKeysByUser = groupByUser(userDeviceKeys);
+          final crossSigningByUser = groupByUser(userCrossSigningKeys);
           for (final userId in deviceKeysOutdated.keys) {
-            final deviceKeysBoxKeys = userDeviceKeys.keys.where((tuple) {
-              final tupleKey = TupleKey.fromString(tuple);
-              return tupleKey.parts.first == userId;
-            });
-            final crossSigningKeysBoxKeys = userCrossSigningKeys.keys.where((
-              tuple,
-            ) {
-              final tupleKey = TupleKey.fromString(tuple);
-              return tupleKey.parts.first == userId;
-            });
-            final childEntries = deviceKeysBoxKeys.map((key) {
-              final userDeviceKey = userDeviceKeys[key];
-              if (userDeviceKey == null) return null;
-              return copyMap(userDeviceKey);
-            });
-            final crossSigningEntries = crossSigningKeysBoxKeys.map((key) {
-              final crossSigningKey = userCrossSigningKeys[key];
-              if (crossSigningKey == null) return null;
-              return copyMap(crossSigningKey);
-            });
             res[userId] = DeviceKeysList.fromDbJson(
               {
                 'client_id': client.id,
                 'user_id': userId,
                 'outdated': deviceKeysOutdated[userId],
               },
-              childEntries
-                  .where((c) => c != null)
-                  .toList()
-                  .cast<Map<String, dynamic>>(),
-              crossSigningEntries
-                  .where((c) => c != null)
-                  .toList()
-                  .cast<Map<String, dynamic>>(),
+              deviceKeysByUser[userId] ?? const <Map<String, dynamic>>[],
+              crossSigningByUser[userId] ?? const <Map<String, dynamic>>[],
               client,
             );
           }
