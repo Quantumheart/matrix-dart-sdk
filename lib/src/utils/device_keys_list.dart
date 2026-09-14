@@ -133,7 +133,7 @@ class DeviceKeysList {
     for (final childEntry in childEntries) {
       try {
         final entry = DeviceKeys.fromDb(childEntry, client);
-        if (!entry.isValid) throw Exception('Invalid device keys');
+        if (!entry.isValidStructure) throw Exception('Invalid device keys');
         deviceKeys[childEntry['device_id']] = entry;
       } catch (e, s) {
         Logs().w('Skipping invalid user device key', e, s);
@@ -526,6 +526,18 @@ class DeviceKeys extends SignableKey {
       curve25519Key != null &&
       ed25519Key != null &&
       selfSigned;
+
+  /// [isValid] without the self-signature check. Loading stored devices uses
+  /// this so the Ed25519 verification ([selfSigned]) runs lazily on first use
+  /// instead of eagerly for every device at startup — prohibitive on accounts
+  /// tracking tens of thousands of devices. A device that turns out to have an
+  /// invalid self-signature is still treated as [blocked], so it is never
+  /// trusted; verification is merely deferred, not skipped.
+  bool get isValidStructure =>
+      deviceId != null &&
+      keys.isNotEmpty &&
+      curve25519Key != null &&
+      ed25519Key != null;
 
   @override
   Future<void> setVerified(bool newVerified, [bool sign = true]) async {

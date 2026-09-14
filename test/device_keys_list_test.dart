@@ -78,6 +78,66 @@ void main() async {
       expect(crossKey.usage.first, 'master');
     });
 
+    test('fromDbJson defers self-signature verification', () async {
+      Map<String, dynamic> deviceDbEntry(
+        String deviceId, {
+        required bool hasKeys,
+      }) => {
+        'user_id': '@alice:example.com',
+        'device_id': deviceId,
+        'content': json.encode({
+          'user_id': '@alice:example.com',
+          'device_id': deviceId,
+          'algorithms': [
+            AlgorithmTypes.olmV1Curve25519AesSha2,
+            AlgorithmTypes.megolmV1AesSha2,
+          ],
+          'keys': hasKeys
+              ? {
+                  'curve25519:$deviceId':
+                      '3C5BFWi2Y8MaVvjM8M22DBmh24PmgR0nPvJOIArzgyI',
+                  'ed25519:$deviceId':
+                      'lEuiRJBit0IG6nUf5pUzWTUEsRVVe/HJkoKuEww9ULI',
+                }
+              : <String, String>{},
+          // Present but not a real signature over these keys.
+          'signatures': {
+            '@alice:example.com': {'ed25519:$deviceId': 'notAValidSignature'},
+          },
+        }),
+        'verified': false,
+        'blocked': false,
+        'last_active': 0,
+      };
+
+      final list = DeviceKeysList.fromDbJson(
+        {
+          'client_id': client.id,
+          'user_id': '@alice:example.com',
+          'outdated': false,
+        },
+        [
+          deviceDbEntry('STRUCTURALLY_VALID', hasKeys: true),
+          deviceDbEntry('NO_KEYS', hasKeys: false),
+        ],
+        [],
+        client,
+      );
+
+      // A structurally valid device is loaded even though its self-signature
+      // is invalid — verification is deferred, not run at load time.
+      final device = list.deviceKeys['STRUCTURALLY_VALID'];
+      expect(device, isNotNull);
+      // But it is never trusted: the (lazy) self-signature check fails, so it
+      // stays blocked.
+      expect(device!.selfSigned, false);
+      expect(device.blocked, true);
+      expect(device.verified, false);
+
+      // Structurally invalid devices (no keys) are still skipped entirely.
+      expect(list.deviceKeys.containsKey('NO_KEYS'), false);
+    });
+
     test('reject devices without self-signature', () async {
       var key = DeviceKeys.fromJson({
         'user_id': '@test:fakeServer.notExisting',
